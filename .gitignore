@@ -1,0 +1,193 @@
+# ============================================
+# Python
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv
+env.bak/
+venv.bak/
+
+# Python Distribution / Packaging
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+wheels/
+*.whl
+
+# ============================================
+# Satellite Data & Large Files
+# ============================================
+*.tif
+*.tiff
+*.hdf
+*.h5
+*.hdf5
+*.nc
+*.geojson
+*.geotiff
+*.shp
+*.shx
+*.dbf
+*.zip
+*.tar.gz
+*.tar
+*.rar
+
+# Data directories (removed from repo)
+data/
+cache/
+downloads/
+processed/
+output/
+temp/
+
+# ============================================
+# Environment & Configuration
+# ============================================
+.env
+.env.local
+.env.*.local
+*.env
+
+# ============================================
+# IDE & Editors
+# ============================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# ============================================
+# Operating System
+# ============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# ============================================
+# Logs & Temporary Files
+# ============================================
+*.log
+logs/
+*.tmp
+*.temp
+~*
+
+# ============================================
+# Testing & Coverage
+# ============================================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+.pytype/
+
+# ============================================
+# Jupyter Notebook
+# ============================================
+.ipynb_checkpoints
+*.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+.jupyter/
+
+# ============================================
+# Database
+# ============================================
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# ============================================
+# Node.js (if used for frontend tools)
+# ============================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn/
+.next/
+out/
+package-lock.json
+yarn.lock
+
+# ============================================
+# Documentation Build
+# ============================================
+docs/_build/
+docs/_static/
+docs/_templates/
+site/
+
+# ============================================
+# NASA Space Apps Specific
+# ============================================
+# User environment files
+*.pyc
+
+# API keys and credentials (extra safety)
+*credentials*
+*secrets*
+*api_key*
+*token*
+
+# Large model files
+*.pkl
+*.pickle
+*.model
+*.h5model
+
+# Cached satellite imagery
+imagery/
+satellite_cache/
+downloaded_scenes/
+
+# ============================================
+# Git & Version Control
+# ============================================
+*.orig
+*.rej
+*.swp
+.git/
+.gitattributes
+
+# ============================================
+# System & Runtime
+# ============================================
+*.pid
+*.seed
+*.pid.lock
+
+# ============================================
+# Cleanup artifacts (if any)
+# ============================================
+CLEANUP_REPORT.md
+CLEANUP_SUMMARY.md
+REPOSITORY_STRUCTURE.md
