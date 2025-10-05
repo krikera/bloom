@@ -4,7 +4,7 @@ NASA Space Apps Challenge 2025
 Main Flask application for serving bloom detection and visualization data
 """
 
-from flask import Flask, jsonify, request, send_file, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import os
 from dotenv import load_dotenv
@@ -15,6 +15,9 @@ from datetime import datetime, timedelta
 from data_fetcher import SatelliteDataFetcher
 from bloom_detector import BloomDetector
 from vegetation_indices import VegetationIndexCalculator
+from species_identifier import SpeciesIdentifier
+from bloom_predictor import BloomPredictor
+from regional_scanner import RegionalScanner
 
 # Load environment variables
 load_dotenv()
@@ -35,6 +38,52 @@ logger = logging.getLogger(__name__)
 data_fetcher = SatelliteDataFetcher()
 bloom_detector = BloomDetector()
 vi_calculator = VegetationIndexCalculator()
+species_identifier = SpeciesIdentifier()
+bloom_predictor = BloomPredictor()
+regional_scanner = RegionalScanner(data_fetcher, bloom_detector, vi_calculator)
+
+def summarize_data_source(data):
+    """Summarize satellite data provenance for API responses"""
+    if not data:
+        return {
+            'real_data': False,
+            'demo_mode': True,
+            'satellite': None,
+            'notes': 'No satellite data returned.'
+        }
+
+    summary = {
+        'real_data': bool(data.get('real_data')),
+        'demo_mode': bool(data.get('demo_mode')),
+        'satellite': data.get('satellite'),
+        'notes': data.get('notes')
+    }
+
+    ndvi_note = None
+    ndvi_data = data.get('ndvi_data')
+    if isinstance(ndvi_data, dict):
+        ndvi_note = ndvi_data.get('note')
+    if ndvi_note and not summary['notes']:
+        summary['notes'] = ndvi_note
+
+    # Inspect nested datasets (e.g., combined sources)
+    for nested_key in ('landsat', 'sentinel'):
+        nested = data.get(nested_key)
+        if nested:
+            nested_summary = summarize_data_source(nested)
+            summary['real_data'] = summary['real_data'] or nested_summary['real_data']
+            summary['demo_mode'] = summary['demo_mode'] and nested_summary['demo_mode']
+            if nested_summary['notes']:
+                if summary['notes']:
+                    summary['notes'] = f"{summary['notes']} {nested_summary['notes']}"
+                else:
+                    summary['notes'] = nested_summary['notes']
+
+    # Normalize booleans (demo_mode is inverse of real_data when unset)
+    if summary['real_data'] and summary['demo_mode']:
+        summary['demo_mode'] = False
+
+    return summary
 
 
 @app.route('/')
@@ -52,6 +101,10 @@ def api_info():
         'endpoints': {
             '/api/bloom/detect': 'Detect blooms in a region',
             '/api/bloom/timeseries': 'Get bloom time series data',
+            '/api/bloom/predict': 'Predict next bloom event',
+            '/api/species/identify': 'Identify vegetation type',
+            '/api/ecology/context': 'Get ecological context',
+            '/api/regional/scan': 'Scan larger region for blooms',
             '/api/ndvi/calculate': 'Calculate NDVI for a region',
             '/api/data/available': 'Check available satellite data',
             '/api/regions/suggest': 'Get suggested bloom regions'
@@ -114,6 +167,9 @@ def detect_bloom():
         if 'ndvi_data' in satellite_data:
             logger.info(f"   - NDVI dates: {satellite_data['ndvi_data'].get('dates', [])}")
             logger.info(f"   - NDVI values: {satellite_data['ndvi_data'].get('values', [])}")
+            data_source_summary = summarize_data_source(satellite_data)
+            if not data_source_summary['real_data']:
+                logger.warning("⚠️ Using synthesized NDVI values (no real pixels available)")
         
         # Calculate vegetation indices
         ndvi_data = vi_calculator.calculate_ndvi(satellite_data)
@@ -142,6 +198,33 @@ def detect_bloom():
         for i, event in enumerate(bloom_events):
             logger.info(f"   Event #{i+1}: {event}")
         
+        # Add species identification if blooms detected
+        species_info = None
+        ecological_context = None
+        
+        if len(bloom_events) > 0:
+            try:
+                species_info = species_identifier.identify_vegetation_type(
+                    ndvi_values=ndvi_data,
+                    evi_values=evi_data,
+                    bloom_events=bloom_events,
+                    location={'lat': lat, 'lon': lon},
+                    dates=dates
+                )
+
+                if species_info and species_info.get('vegetation_type') not in (None, 'unknown'):
+                    species_characteristics = species_info.get('characteristics', {})
+                    ecological_context = species_identifier.get_ecological_context(
+                        location={'lat': lat, 'lon': lon},
+                        vegetation_type=species_info['vegetation_type'],
+                        bloom_characteristics={
+                            'peak_ndvi': species_characteristics.get('peak_ndvi', float(ndvi_data.max()) if len(ndvi_data) else 0.0),
+                            'bloom_events': bloom_events
+                        }
+                    )
+            except Exception as e:
+                logger.warning(f"Could not identify species: {str(e)}")
+        
         response = {
             'status': 'success',
             'location': {'lat': lat, 'lon': lon},
@@ -152,7 +235,10 @@ def detect_bloom():
                 'peak_bloom_date': bloom_detector.get_peak_bloom_date(bloom_events),
                 'average_ndvi': float(ndvi_data.mean()) if len(ndvi_data) > 0 else 0,
                 'bloom_intensity': bloom_detector.calculate_bloom_intensity(bloom_events)
-            }
+            },
+                'species_identification': species_info,
+                'ecological_context': ecological_context,
+                'data_source': data_source_summary
         }
         
         return jsonify(response)
@@ -189,6 +275,7 @@ def get_bloom_timeseries():
         logger.info(f"Time series requested for ({lat}, {lon}), years: {years}")
         
         timeseries_data = []
+        data_sources = []
         
         for year in years:
             # Define season dates
@@ -213,6 +300,10 @@ def get_bloom_timeseries():
             )
             
             if satellite_data:
+                data_sources.append({
+                    'year': year,
+                    **summarize_data_source(satellite_data)
+                })
                 ndvi_data = vi_calculator.calculate_ndvi(satellite_data)
                 bloom_events = bloom_detector.detect_blooms(ndvi_data)
                 
@@ -228,7 +319,8 @@ def get_bloom_timeseries():
             'status': 'success',
             'location': {'lat': lat, 'lon': lon},
             'timeseries': timeseries_data,
-            'trends': bloom_detector.analyze_trends(timeseries_data)
+            'trends': bloom_detector.analyze_trends(timeseries_data),
+            'data_sources': data_sources
         })
         
     except Exception as e:
@@ -397,6 +489,149 @@ def check_data_availability():
         return jsonify({
             'error': str(e),
             'status': 'error'
+        }), 500
+
+
+@app.route('/api/bloom/predict', methods=['POST'])
+def predict_bloom():
+    """
+    Predict next bloom event based on historical data
+    
+    Request body:
+    {
+        "lat": 34.745,
+        "lon": -118.376,
+        "historical_years": [2020, 2021, 2022, 2023, 2024],
+        "season": "spring",
+        "vegetation_type": "desert_wildflowers"  // optional
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        lat = float(data.get('lat'))
+        lon = float(data.get('lon'))
+        historical_years = data.get('historical_years', [2020, 2021, 2022, 2023, 2024])
+        season = data.get('season', 'spring')
+        vegetation_type = data.get('vegetation_type')
+        
+        logger.info(f"Bloom prediction requested for ({lat}, {lon})")
+        
+        # Fetch historical data
+        historical_blooms = []
+        data_sources = []
+        
+        for year in historical_years:
+            season_dates = {
+                'spring': (f"{year}-03-01", f"{year}-05-31"),
+                'summer': (f"{year}-06-01", f"{year}-08-31"),
+                'fall': (f"{year}-09-01", f"{year}-11-30"),
+                'winter': (f"{year}-12-01", f"{year+1}-02-28")
+            }
+            
+            start_date, end_date = season_dates.get(season, season_dates['spring'])
+            
+            satellite_data = data_fetcher.fetch_data(
+                lat=lat,
+                lon=lon,
+                start_date=start_date,
+                end_date=end_date,
+                buffer_km=5,
+                satellite='landsat'
+            )
+            
+            if satellite_data:
+                data_sources.append({
+                    'year': year,
+                    **summarize_data_source(satellite_data)
+                })
+                ndvi_data = vi_calculator.calculate_ndvi(satellite_data)
+                
+                dates = None
+                if 'ndvi_data' in satellite_data and satellite_data['ndvi_data']:
+                    dates = satellite_data['ndvi_data'].get('dates', None)
+                
+                bloom_events = bloom_detector.detect_blooms(ndvi_data, dates=dates)
+                
+                historical_blooms.append({
+                    'year': year,
+                    'bloom_events': bloom_events,
+                    'peak_ndvi': float(ndvi_data.max()) if len(ndvi_data) > 0 else 0
+                })
+        
+        # Generate prediction
+        prediction = bloom_predictor.predict_next_bloom(
+            historical_blooms=historical_blooms,
+            location={'lat': lat, 'lon': lon},
+            vegetation_type=vegetation_type
+        )
+        prediction['data_sources'] = data_sources
+        
+        return jsonify(prediction)
+        
+    except Exception as e:
+        logger.error(f"Error predicting bloom: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/regional/scan', methods=['POST'])
+def scan_region():
+    """
+    Scan a larger region for bloom hotspots
+    
+    Request body:
+    {
+        "bbox": [-118.6, 34.5, -117.9, 34.95],  // [min_lon, min_lat, max_lon, max_lat]
+        "start_date": "2024-03-01",
+        "end_date": "2024-05-31",
+        "grid_resolution": 0.1  // degrees, optional
+    }
+    OR
+    {
+        "region_name": "antelope_valley",
+        "start_date": "2024-03-01",
+        "end_date": "2024-05-31"
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        start_date = data.get('start_date')
+        end_date = data.get('end_date')
+        
+        # Check if predefined region or custom bbox
+        if 'region_name' in data:
+            region_name = data['region_name']
+            logger.info(f"Regional scan requested for: {region_name}")
+            
+            result = regional_scanner.scan_predefined_region(
+                region_name=region_name,
+                start_date=start_date,
+                end_date=end_date
+            )
+        else:
+            bbox = data.get('bbox')
+            grid_resolution = float(data.get('grid_resolution', 0.25))
+            
+            logger.info(f"Regional scan requested for bbox: {bbox}")
+            
+            result = regional_scanner.scan_region(
+                bbox=tuple(bbox),
+                start_date=start_date,
+                end_date=end_date,
+                grid_resolution=grid_resolution
+            )
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error in regional scan: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
         }), 500
 
 

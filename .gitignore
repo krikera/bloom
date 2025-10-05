@@ -178,16 +178,4 @@ downloaded_scenes/
 .git/
 .gitattributes
 
-# ============================================
-# System & Runtime
-# ============================================
-*.pid
-*.seed
-*.pid.lock
 
-# ============================================
-# Cleanup artifacts (if any)
-# ============================================
-CLEANUP_REPORT.md
-CLEANUP_SUMMARY.md
-REPOSITORY_STRUCTURE.md

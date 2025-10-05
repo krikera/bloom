@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
     <style>
         :root {
             --primary-color: #27ae60;
@@ -156,6 +157,37 @@
             margin-bottom: 20px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
+        
+        .ndvi-legend {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .ndvi-scale {
+            display: flex;
+            height: 40px;
+            border-radius: 5px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        
+        .ndvi-scale-item {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 0.75rem;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+        
+        .data-quality-badge {
+            font-size: 1rem;
+            padding: 8px 16px;
+        }
     </style>
 </head>
 <body>
@@ -301,15 +333,27 @@
                                         Combined mode provides ~3-day effective revisit with multi-scale analysis
                                     </small>
                                 </div>
-                                <div class="row g-2">
-                                    <div class="col-md-8">
+                                <div class="row g-2 mb-2">
+                                    <div class="col-md-6">
                                         <button type="submit" class="btn btn-primary w-100">
                                             <i class="fas fa-play"></i> Run Analysis
                                         </button>
                                     </div>
-                                    <div class="col-md-4">
+                                    <div class="col-md-6">
                                         <button type="button" id="checkDataBtn" class="btn btn-outline-secondary w-100">
                                             <i class="fas fa-satellite-dish"></i> Check Data
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="row g-2">
+                                    <div class="col-md-6">
+                                        <button type="button" id="multiYearBtn" class="btn btn-success w-100">
+                                            <i class="fas fa-calendar-alt"></i> Multi-Year Trends
+                                        </button>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <button type="button" id="predictBtn" class="btn btn-warning w-100">
+                                            <i class="fas fa-crystal-ball"></i> Predict Next Bloom
                                         </button>
                                     </div>
                                 </div>
@@ -327,6 +371,52 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- Regional Scanner -->
+            <h2 class="text-center mb-4 mt-5">
+                <i class="fas fa-globe-americas"></i> Regional Bloom Scanner
+            </h2>
+            <div class="row justify-content-center">
+                <div class="col-md-8">
+                    <div class="card">
+                        <div class="card-header bg-success text-white">
+                            <i class="fas fa-search-location"></i> Scan Larger Regions
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted">Scan predefined regions to find bloom hotspots across larger areas</p>
+                            <div class="mb-3">
+                                <label class="form-label">Select Region</label>
+                                <select class="form-control" id="regionSelect">
+                                    <option value="antelope_valley">Antelope Valley, California</option>
+                                    <option value="carrizo_plain">Carrizo Plain, California</option>
+                                    <option value="death_valley">Death Valley Region</option>
+                                    <option value="washington_dc">Washington DC Metro</option>
+                                    <option value="great_plains_kansas">Kansas Great Plains</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Date Range</label>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <input type="date" class="form-control" id="regionalStartDate" value="2024-03-01">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <input type="date" class="form-control" id="regionalEndDate" value="2024-05-31">
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="button" id="scanRegionBtn" class="btn btn-success w-100">
+                                <i class="fas fa-radar"></i> Scan Region for Blooms
+                            </button>
+                            <div id="regionalLoading" class="loading" style="display: none;">
+                                <div class="spinner-border text-success" role="status"></div>
+                                <p class="mt-2">Scanning region... This may take 1-2 minutes</p>
+                            </div>
+                            <div id="regionalResults" class="mt-4"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -334,38 +424,38 @@
     <section id="about" class="py-5" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
         <div class="container">
             <h2 class="text-center text-white mb-5">
-                <i class="fas fa-star"></i> Key Features
+                <i class="fas fa-star"></i> What This Tool Can Do
             </h2>
             <div class="row text-center text-white">
                 <div class="col-md-4 mb-4">
-                    <div class="feature-icon"><i class="fas fa-chart-line"></i></div>
-                    <h4>Temporal Analysis</h4>
-                    <p>Track bloom patterns across multiple years using 40+ years of Landsat archive</p>
+                    <div class="feature-icon"><i class="fas fa-map-marker-alt"></i></div>
+                    <h4>Point-Based Detection</h4>
+                    <p>Detect blooms at specific locations with 10km buffer zone analysis</p>
                 </div>
                 <div class="col-md-4 mb-4">
                     <div class="feature-icon"><i class="fas fa-leaf"></i></div>
                     <h4>NDVI/EVI Calculation</h4>
-                    <p>Advanced vegetation indices to detect bloom intensity and health</p>
+                    <p>Calculate vegetation indices from real satellite imagery bands</p>
                 </div>
                 <div class="col-md-4 mb-4">
-                    <div class="feature-icon"><i class="fas fa-brain"></i></div>
-                    <h4>Predictive Models</h4>
-                    <p>Machine learning to forecast bloom timing and intensity</p>
+                    <div class="feature-icon"><i class="fas fa-satellite"></i></div>
+                    <h4>Real NASA Data</h4>
+                    <p>Access Landsat 8/9 and Sentinel-2 via Planetary Computer API</p>
                 </div>
                 <div class="col-md-4 mb-4">
-                    <div class="feature-icon"><i class="fas fa-seedling"></i></div>
-                    <h4>Species Identification</h4>
-                    <p>Spectral signature analysis for flower type detection</p>
+                    <div class="feature-icon"><i class="fas fa-chart-area"></i></div>
+                    <h4>Time Series Charts</h4>
+                    <p>Visualize NDVI changes over your selected date range</p>
                 </div>
                 <div class="col-md-4 mb-4">
-                    <div class="feature-icon"><i class="fas fa-globe"></i></div>
-                    <h4>Multi-Scale Analysis</h4>
-                    <p>From global patterns to local field monitoring</p>
+                    <div class="feature-icon"><i class="fas fa-calendar-check"></i></div>
+                    <h4>Bloom Timing</h4>
+                    <p>Identify start, peak, and end dates of detected bloom events</p>
                 </div>
                 <div class="col-md-4 mb-4">
-                    <div class="feature-icon"><i class="fas fa-bell"></i></div>
-                    <h4>Real-time Alerts</h4>
-                    <p>Notifications when bloom events are detected</p>
+                    <div class="feature-icon"><i class="fas fa-layer-group"></i></div>
+                    <h4>Multi-Source Option</h4>
+                    <p>Choose between Landsat, Sentinel-2, or combined analysis</p>
                 </div>
             </div>
         </div>
@@ -427,17 +517,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="col-md-12 mb-3">
-                    <div class="card">
-                        <div class="card-body">
-                            <h5><i class="fas fa-users"></i> GLOBE Observer + Ground Truth</h5>
-                            <p><strong>Type:</strong> Citizen science ground observations<br>
-                            <strong>Update:</strong> Real-time<br>
-                            <strong>Use:</strong> Validation and training data<br>
-                            <strong>Integration:</strong> Complements satellite data</p>
-                        </div>
-                    </div>
-                </div>
+
             </div>
         </div>
     </section>
@@ -447,18 +527,16 @@
         <div class="container text-center">
             <h5><i class="fas fa-leaf"></i> BloomWatch</h5>
             <p>NASA Space Apps Challenge 2025 - Track the Bloom!</p>
+            <p><strong>Basic Prototype:</strong> Point-based bloom detection using NASA Landsat & Sentinel-2 data</p>
             <p>
                 <a href="https://earthdata.nasa.gov/" class="text-white me-3" target="_blank">
                     <i class="fas fa-database"></i> NASA Earthdata
                 </a>
-                <a href="https://github.com" class="text-white me-3" target="_blank">
-                    <i class="fab fa-github"></i> GitHub
-                </a>
-                <a href="https://observer.globe.gov/" class="text-white" target="_blank">
-                    <i class="fas fa-globe"></i> GLOBE Observer
+                <a href="https://planetarycomputer.microsoft.com/" class="text-white me-3" target="_blank">
+                    <i class="fas fa-cloud"></i> Microsoft Planetary Computer
                 </a>
             </p>
-            <p class="mt-3">&copy; 2025 BloomWatch. Open source for environmental good.</p>
+            <p class="mt-3">&copy; 2025 BloomWatch. Educational prototype.</p>
         </div>
     </footer>
 

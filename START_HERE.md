@@ -3,7 +3,8 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                                                               │
-│             🌸 BLOOMWATCH - QUICK START 🌸                   │
+│        🌸 BLOOMWATCH - BLOOM DETECTOR 🌸               │
+│          Point-based analysis with NASA data                 │
 │                                                               │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -74,49 +75,3 @@ http://127.0.0.1:5000
 Press `Ctrl + C` in the terminal
 
 ---
-
-## 📚 Need More Help?
-
-- **HOW_TO_RUN.md** - Detailed guide
-- **COMPLETE_SOLUTION_GUIDE.md** - Full documentation
-- **QUICK_START_CARD.md** - Demo reference
-
----
-
-## 🔥 One-Liner
-
-```bash
-cd ~/Desktop/Nasa && source venv/bin/activate && cd backend && python3 app.py
-```
-
-Then open: http://127.0.0.1:5000
-
----
-
-## ✨ Key Points
-
-- ✅ **One server** runs everything
-- ✅ **One port** (5000) for frontend + backend
-- ✅ **One command** to start it all
-- ✅ **Real NASA data** automatically fetched
-- ✅ **No separate frontend server** needed
-
----
-
-## 🌍 Access From Anywhere
-
-**Local:** http://127.0.0.1:5000  
-**Network:** http://10.246.55.254:5000  
-**Public:** Use ngrok (see HOW_TO_RUN.md)
-
----
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                                                               │
-│      🚀 Your NASA Space Apps Solution is READY! 🚀          │
-│                                                               │
-│                     Good Luck! 🏆                            │
-│                                                               │
-└─────────────────────────────────────────────────────────────┘
-```

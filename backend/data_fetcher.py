@@ -7,66 +7,46 @@ import os
 import logging
 from datetime import datetime, timedelta
 import numpy as np
+
 import pandas as pd
-from typing import Dict, List, Optional, Tuple
-import earthaccess
+from typing import Dict, Optional, Tuple
 from pystac_client import Client
-from shapely.geometry import box
+from shapely.geometry import box, mapping
 
 # Optional imports - gracefully handle missing dependencies
 try:
     import rasterio
     from rasterio.mask import mask
+    from rasterio.warp import transform_geom
     HAS_RASTERIO = True
 except ImportError:
     HAS_RASTERIO = False
     logging.warning("rasterio not available - some advanced features disabled")
 
-try:
-    import xarray as xr
-    HAS_XARRAY = True
-except ImportError:
-    HAS_XARRAY = False
-    logging.warning("xarray not available - some advanced features disabled")
+
 
 logger = logging.getLogger(__name__)
 
 
 class SatelliteDataFetcher:
     """Fetch satellite data from NASA sources"""
-    
     def __init__(self):
-        """Initialize data fetcher with NASA Earthdata credentials"""
         self.earthdata_username = os.getenv('EARTHDATA_USERNAME')
         self.earthdata_password = os.getenv('EARTHDATA_PASSWORD')
         self.cache_dir = os.getenv('CACHE_DIR', './data/cache')
-        
-        # Create cache directory if it doesn't exist
         os.makedirs(self.cache_dir, exist_ok=True)
-        
-        # Authenticate with NASA Earthdata
+        self.demo_mode = False
         self._authenticate()
     
     def _authenticate(self):
         """Authenticate with NASA Earthdata"""
-        try:
-            if self.earthdata_username and self.earthdata_password:
-                # earthaccess.login() API changed - now uses strategy parameter
-                auth = earthaccess.login(strategy="environment")
-                if auth:
-                    logger.info("Successfully authenticated with NASA Earthdata")
-                else:
-                    logger.warning("NASA Earthdata credentials not found. Using demo mode.")
-                    self.demo_mode = True
-            else:
-                logger.info("NASA Earthdata credentials not provided. Using demo mode for unavailable data.")
-                logger.info("✅ Real Landsat + Sentinel-2 data still available via Microsoft Planetary Computer!")
-                # Demo mode only for NASA-specific datasets
-                # Microsoft Planetary Computer works without credentials
-                self.demo_mode = True
-        except Exception as e:
-            logger.warning(f"NASA Earthdata authentication skipped: {str(e)}")
-            logger.info("✅ Continuing with Microsoft Planetary Computer (no credentials needed)")
+        # NASA Earthdata authentication is not required for Microsoft Planetary Computer
+        # This is a placeholder for future NASA-specific datasets
+        if self.earthdata_username and self.earthdata_password:
+            logger.info("NASA Earthdata credentials provided (not used in current pipeline)")
+        else:
+            logger.info("NASA Earthdata credentials not provided. Using demo mode for unavailable data.")
+            logger.info("✅ Real Landsat + Sentinel-2 data still available via Microsoft Planetary Computer!")
             self.demo_mode = True
     
     def fetch_data(
@@ -104,8 +84,8 @@ class SatelliteDataFetcher:
             # Create bounding box
             bbox = self._create_bbox(lat, lon, buffer_km)
             
-            if hasattr(self, 'demo_mode') and self.demo_mode:
-                return self._generate_demo_data(lat, lon, start_date, end_date, satellite)
+            # Microsoft Planetary Computer doesn't require NASA credentials
+            # Try real data first, fallback to demo if it fails
             
             # Combined Landsat + Sentinel-2 for maximum temporal coverage
             if satellite.lower() == 'combined' or combine_sources:
@@ -138,6 +118,241 @@ class SatelliteDataFetcher:
             lat + lat_buffer   # max_lat
         )
     
+    def _process_landsat_scene_actual(self, item, bbox: Tuple) -> Optional[Dict]:
+        """
+        Actually download and process Landsat imagery (not simulation)
+        
+        Args:
+            item: STAC item for Landsat scene
+            bbox: Bounding box (min_lon, min_lat, max_lon, max_lat)
+            
+        Returns:
+            Dictionary with real NDVI calculated from NIR/Red bands
+        """
+        try:
+            if not HAS_RASTERIO:
+                logger.warning("⚠️ rasterio not available, cannot process real imagery")
+                return None
+                
+            import rasterio
+            from rasterio.mask import mask
+            from shapely.geometry import box as shapely_box
+            
+            try:
+                import planetary_computer
+                # Get signed URLs for bands (Microsoft Planetary Computer)
+                signed_item = planetary_computer.sign(item)
+            except ImportError:
+                logger.warning("planetary_computer not available, using unsigned URLs")
+                signed_item = item
+            
+            # We need Red (Band 4) and NIR (Band 5) for Landsat 8/9
+            red_href = signed_item.assets['red'].href
+            nir_href = signed_item.assets['nir08'].href
+            
+            logger.info(f"📥 Downloading Landsat scene: {item.id}")
+            
+            # Create shapely box for masking
+            geom = shapely_box(*bbox)
+            
+            # Calculate center point in pixel coordinates
+            center_lon = (bbox[0] + bbox[2]) / 2
+            center_lat = (bbox[1] + bbox[3]) / 2
+            
+            logger.info(f"   Target: {center_lat:.4f}°, {center_lon:.4f}°")
+            
+            # Read Red band - sample region around point
+            with rasterio.open(red_href) as red_src:
+                # The raster uses a projected CRS, but we have lat/lon
+                # rasterio.index() handles the coordinate transformation automatically
+                logger.info(f"   Raster CRS: {red_src.crs}")
+                logger.info(f"   Raster bounds: {red_src.bounds}")
+                
+                # Convert lon/lat to pixel coordinates
+                try:
+                    row, col = red_src.index(center_lon, center_lat)
+                except:
+                    # If point is outside raster, use scene center
+                    logger.warning(f"   Point outside scene, using center")
+                    height, width = red_src.shape
+                    row, col = height // 2, width // 2
+                
+                logger.info(f"   Pixel coordinates: row={row}, col={col}")
+                
+                # Ensure window is within bounds
+                height, width = red_src.shape
+                window_size = 50  # Increased from 10 to get more pixels
+                half_size = window_size // 2
+                
+                # Calculate window bounds, ensuring they're within the raster
+                col_start = max(0, min(width - window_size, int(col) - half_size))
+                row_start = max(0, min(height - window_size, int(row) - half_size))
+                win_width = min(window_size, width - col_start)
+                win_height = min(window_size, height - row_start)
+                
+                # Sanity check
+                if win_width <= 0 or win_height <= 0:
+                    logger.warning(f"   Invalid window size: {win_width}x{win_height}")
+                    return None
+                
+                window = rasterio.windows.Window(col_start, row_start, win_width, win_height)
+                
+                logger.info(f"   Reading window: {win_width}x{win_height} at row {row_start}, col {col_start}")
+                
+                red_raw = red_src.read(1, window=window).astype(float)
+                
+                if red_raw.size == 0:
+                    logger.warning("   Red band window is empty")
+                    return None
+                
+                logger.info(f"   Red band: raw range [{red_raw.min():.0f}, {red_raw.max():.0f}]")
+                
+                # Apply scale factor for Landsat Collection 2
+                # Scale factor converts DN to reflectance
+                red_data = red_raw * 0.0000275 - 0.2
+            
+            # Read NIR band  
+            with rasterio.open(nir_href) as nir_src:
+                # Convert lon/lat to pixel coordinates
+                row, col = nir_src.index(center_lon, center_lat)
+                
+                # Ensure window is within bounds
+                height, width = nir_src.shape
+                half_size = window_size // 2
+                
+                col_start = max(0, min(width - window_size, int(col) - half_size))
+                row_start = max(0, min(height - window_size, int(row) - half_size))
+                win_width = min(window_size, width - col_start)
+                win_height = min(window_size, height - row_start)
+                
+                if win_width <= 0 or win_height <= 0:
+                    logger.warning(f"   Invalid NIR window size: {win_width}x{win_height}")
+                    return None
+                
+                window = rasterio.windows.Window(col_start, row_start, win_width, win_height)
+                
+                nir_raw = nir_src.read(1, window=window).astype(float)
+                
+                if nir_raw.size == 0:
+                    logger.warning("   NIR band window is empty")
+                    return None
+                
+                logger.info(f"   NIR band: raw range [{nir_raw.min():.0f}, {nir_raw.max():.0f}]")
+                
+                # Apply scale factor for Landsat Collection 2
+                nir_data = nir_raw * 0.0000275 - 0.2
+            
+            logger.info(f"   Red reflectance: [{red_data.min():.3f}, {red_data.max():.3f}]")
+            logger.info(f"   NIR reflectance: [{nir_data.min():.3f}, {nir_data.max():.3f}]")
+            
+            # Calculate NDVI from actual pixels
+            # Handle division by zero
+            with np.errstate(divide='ignore', invalid='ignore'):
+                ndvi = (nir_data - red_data) / (nir_data + red_data)
+            
+            # Filter invalid values
+            # 1. Remove inf/nan
+            # 2. Remove values outside physical range [-1, 1]
+            # 3. Remove pixels where both bands are very dark (likely fill values or shadows)
+            mask = (
+                np.isfinite(ndvi) &  # Not inf or nan
+                (ndvi >= -1) & (ndvi <= 1) &  # Physical range
+                ((red_raw > 0) | (nir_raw > 0))  # Exclude pixels with no signal / nodata
+            )
+            
+            valid_ndvi = ndvi[mask]
+            
+            logger.info(f"   Valid pixels: {len(valid_ndvi)} / {ndvi.size}")
+            
+            if len(valid_ndvi) == 0:
+                logger.warning("❌ No valid NDVI pixels after filtering")
+                logger.warning(f"   Red DN range: [{red_raw.min():.0f}, {red_raw.max():.0f}]")
+                logger.warning(f"   NIR DN range: [{nir_raw.min():.0f}, {nir_raw.max():.0f}]")
+                logger.warning(f"   NDVI raw range: [{ndvi.min():.3f}, {ndvi.max():.3f}]")
+                logger.warning(f"   Mask passed: {mask.sum()} pixels")
+                logger.info("   Attempting geometry-based sampling fallback...")
+                fallback_red, fallback_nir, red_nodata, nir_nodata = self._sample_landsat_region(red_href, nir_href, bbox)
+                if fallback_red is not None and fallback_nir is not None:
+                    red_raw = fallback_red
+                    nir_raw = fallback_nir
+                    nodata_mask = np.zeros_like(red_raw, dtype=bool)
+                    if red_nodata is not None:
+                        nodata_mask |= (red_raw == red_nodata)
+                    if nir_nodata is not None:
+                        nodata_mask |= (nir_raw == nir_nodata)
+                    red_data = red_raw * 0.0000275 - 0.2
+                    nir_data = nir_raw * 0.0000275 - 0.2
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        ndvi = (nir_data - red_data) / (nir_data + red_data)
+                    mask = (
+                        np.isfinite(ndvi) &
+                        (ndvi >= -1) & (ndvi <= 1) &
+                        ((red_raw > 0) | (nir_raw > 0))
+                    )
+                    if nodata_mask.any():
+                        mask &= ~nodata_mask
+                    valid_ndvi = ndvi[mask]
+                
+            if len(valid_ndvi) == 0:
+                logger.warning("   Fallback sampling also failed to produce valid NDVI")
+                return None
+            
+            logger.info(f"   NDVI range: [{valid_ndvi.min():.3f}, {valid_ndvi.max():.3f}]")
+            
+            mean_ndvi = float(np.mean(valid_ndvi))
+            max_ndvi = float(np.max(valid_ndvi))
+            std_ndvi = float(np.std(valid_ndvi))
+            
+            logger.info(f"✅ Processed real imagery: NDVI mean={mean_ndvi:.3f}, max={max_ndvi:.3f}, std={std_ndvi:.3f}")
+            
+            return {
+                'scene_id': item.id,
+                'date': item.properties.get('datetime', '').split('T')[0],
+                'ndvi_mean': mean_ndvi,
+                'ndvi_max': max_ndvi,
+                'ndvi_std': std_ndvi,
+                'cloud_cover': item.properties.get('eo:cloud_cover', 0),
+                'real_data': True  # Flag to indicate this is actual imagery
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing scene: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+    
+    def _sample_landsat_region(self, red_href: str, nir_href: str, bbox: Tuple) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[float], Optional[float]]:
+        """Sample Landsat bands using the full bounding box as fallback"""
+        try:
+            with rasterio.open(red_href) as red_src, rasterio.open(nir_href) as nir_src:
+                geom = box(*bbox)
+                geom_geojson = mapping(geom)
+                target_geom = geom_geojson
+
+                if red_src.crs and red_src.crs.to_string() != 'EPSG:4326':
+                    try:
+                        target_geom = transform_geom('EPSG:4326', red_src.crs, geom_geojson)
+                    except Exception as transform_error:
+                        logger.warning(f"   Failed to transform geometry to raster CRS: {transform_error}")
+
+                red_arr, _ = mask(red_src, [target_geom], crop=True, filled=False)
+                nir_arr, _ = mask(nir_src, [target_geom], crop=True, filled=False)
+
+                # mask() returns arrays with shape (1, H, W)
+                red_data = np.ma.masked_array(red_arr[0], mask=np.ma.getmaskarray(red_arr[0]))
+                nir_data = np.ma.masked_array(nir_arr[0], mask=np.ma.getmaskarray(nir_arr[0]))
+
+                if red_data.count() == 0 or nir_data.count() == 0:
+                    return None, None, red_src.nodata, nir_src.nodata
+
+                return np.asarray(red_data.filled(red_src.nodata if red_src.nodata is not None else 0), dtype=float), \
+                    np.asarray(nir_data.filled(nir_src.nodata if nir_src.nodata is not None else 0), dtype=float), \
+                    red_src.nodata, nir_src.nodata
+
+        except Exception as e:
+            logger.error(f"   Geometry-based sampling failed: {e}")
+        return None, None, None, None
+
     def _fetch_landsat(self, bbox: Tuple, start_date: str, end_date: str) -> Optional[Dict]:
         """
         Fetch Landsat 8/9 Collection 2 Level-2 data
@@ -191,11 +406,41 @@ class SatelliteDataFetcher:
             
             logger.info(f"✅ Found {len(items)} Landsat scenes (best: {items[0].properties.get('eo:cloud_cover', 'N/A'):.1f}% cloud cover)")
             
-            # Generate simulated NDVI data from real scene metadata
-            # (Without rasterio, we can't download actual imagery)
-            ndvi_timeseries = self._generate_ndvi_from_scenes(items, start_date, end_date)
+            # Try to process actual imagery from clearest scene
+            logger.info("🎯 Attempting to process actual satellite imagery...")
+            processed_scene = self._process_landsat_scene_actual(items[0], bbox)
             
-            # Use the clearest scene
+            if processed_scene and processed_scene.get('real_data'):
+                # Successfully processed real data!
+                logger.info("🎉 SUCCESS: Using real satellite data!")
+                return {
+                    'satellite': 'Landsat-8/9',
+                    'source': 'Microsoft Planetary Computer',
+                    'bbox': bbox,
+                    'date_range': [start_date, end_date],
+                    'scenes_found': len(items),
+                    'ndvi_data': {
+                        'dates': [processed_scene['date']],
+                        'values': [processed_scene['ndvi_mean']],
+                        'quality': 'high'
+                    },
+                    'metadata': {
+                        'scene_id': processed_scene['scene_id'],
+                        'cloud_cover': processed_scene['cloud_cover'],
+                        'ndvi_max': processed_scene['ndvi_max'],
+                        'ndvi_std': processed_scene['ndvi_std']
+                    },
+                    'real_data': True,  # Critical flag
+                    'demo_mode': False,
+                    'notes': 'NDVI computed from real Landsat surface reflectance pixels.'
+                }
+            else:
+                # Fallback to demo mode if real processing failed
+                logger.warning("⚠️ Real data processing failed, falling back to demo mode")
+                # Generate simulated NDVI data from real scene metadata
+                ndvi_timeseries = self._generate_ndvi_from_scenes(items, start_date, end_date)
+            
+            # Use the clearest scene (demo mode)
             item = items[0]
             
             # Extract all relevant bands for bloom detection
@@ -231,7 +476,10 @@ class SatelliteDataFetcher:
                 'scene_count': len(items),
                 'temporal_coverage': f"{start_date} to {end_date}",
                 # Add simulated NDVI data
-                'ndvi_data': ndvi_timeseries
+                'ndvi_data': ndvi_timeseries,
+                'real_data': False,
+                'demo_mode': True,
+                'notes': 'Real pixel sampling unavailable; NDVI synthesized from scene metadata.'
             }
             
             return data
@@ -290,6 +538,16 @@ class SatelliteDataFetcher:
             
             # Generate combined NDVI from all scenes
             combined_ndvi = self._generate_ndvi_from_scenes(combined_items, start_date, end_date)
+            real_data_available = bool(
+                (landsat_data and landsat_data.get('real_data')) or
+                (sentinel_data and sentinel_data.get('real_data'))
+            )
+            notes = []
+            for dataset in (landsat_data, sentinel_data):
+                if dataset and dataset.get('notes'):
+                    notes.append(dataset['notes'])
+            if not real_data_available:
+                notes.append('Using synthesized NDVI because raw pixel processing was unavailable for at least one source.')
             
             return {
                 'satellite': 'Combined Landsat-8/9 + Sentinel-2',
@@ -301,6 +559,9 @@ class SatelliteDataFetcher:
                 'total_scenes': len(combined_items),
                 'effective_revisit': '~3 days',
                 'ndvi_data': combined_ndvi,  # Add NDVI data at top level
+                'real_data': real_data_available,
+                'demo_mode': not real_data_available,
+                'notes': ' '.join(notes).strip() if notes else None,
                 'metadata': {
                     'description': 'Optimal combination for bloom detection',
                     'landsat_scenes': landsat_data.get('scene_count', 0),
@@ -427,7 +688,10 @@ class SatelliteDataFetcher:
                 'scene_count': len(items),
                 'temporal_coverage': f"{start_date} to {end_date}",
                 'quality_score': self._calculate_sentinel_quality_score(item),
-                'ndvi_data': ndvi_timeseries  # Add NDVI timeseries
+                'ndvi_data': ndvi_timeseries,  # Add NDVI timeseries
+                'real_data': False,
+                'demo_mode': True,
+                'notes': 'Sentinel-2 raster processing not enabled; NDVI derived from scene metadata.'
             }
             
             return data
