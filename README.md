@@ -69,15 +69,6 @@ python app.py
 
 This starts the Flask server on `http://127.0.0.1:5000/` and serves both the API and the frontend UI. Satellite requests may take several seconds while scenes download and process.
 
-## Running tests
-
-```bash
-# With the virtual environment active
-python -m pytest tests
-```
-
-The test suite exercises vegetation index calculations, bloom detection logic, provenance helpers, and basic fetcher initialization.
-
 ## Data sources
 
 | Dataset | Description | Link |
@@ -86,11 +77,6 @@ The test suite exercises vegetation index calculations, bloom detection logic, p
 | Sentinel-2 Level-2A | Harmonized Sentinel-2 imagery providing higher temporal resolution | https://planetarycomputer.microsoft.com/dataset/sentinel-2-l2a |
 | Microsoft Planetary Computer | Hosting platform that signs data URLs and provides STAC search | https://planetarycomputer.microsoft.com/ |
 
-## Known limitations
-
-- Real imagery processing requires Rasterio and access to MPC signed URLs. When those dependencies fail, the system falls back to curated demo NDVI values and labels the output accordingly.
-- Cloud cover and water masking are basic; dense clouds can still reduce valid pixel counts.
-- Notebook-based analyses in `notebooks/` are optional and not part of the production API pipeline.
 
 ## Contributing
 
